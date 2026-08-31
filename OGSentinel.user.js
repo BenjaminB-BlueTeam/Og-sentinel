@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         OGSentinel
 // @namespace    benjamin.bourger
-// @version      10.2
-// @updateURL    https://x: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@raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
-// @downloadURL  https://x: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@raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
+// @version      10.3
+// @updateURL    https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
+// @downloadURL  https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
 // @description  OGame : interception Porte de saut (+recyclage post-saut) + envoi auto expéditions + sniper enchère + auto-refresh + notification ntfy sur attaque + raid timé
 // @match        *://*.ogame.gameforge.com/game/*
 // @grant        none
@@ -14,7 +14,7 @@
     // ============================================================
     // CONFIG NOTIFICATION
     // ============================================================
-    const NTFY_TOPIC = 'pds-bbo-ogame';
+    const NTFY_TOPIC = 'ogs-2pes0q7ebvyqq5';
     const ALERT_SELECTOR = '#attack_alert.soon';
     const NOTIF_COOLDOWN_KEY = 'ogs_notif_cooldown_min';
     const DEFAULT_NOTIF_COOLDOWN_MIN = 10; // minutes par défaut
