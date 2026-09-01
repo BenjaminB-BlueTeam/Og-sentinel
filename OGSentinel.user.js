@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGSentinel
 // @namespace    benjamin.bourger
-// @version      10.5
+// @version      10.6
 // @updateURL    https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
 // @downloadURL  https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
 // @description  OGame : interception Porte de saut (+recyclage post-saut) + envoi auto expéditions + sniper enchère + auto-refresh + notification ntfy sur attaque + raid timé
@@ -14,7 +14,7 @@
     // ============================================================
     // CONFIG NOTIFICATION
     // ============================================================
-    const NTFY_TOPIC = 'ogs-2pes0q7ebvyqq5';
+    const NTFY_TOPIC = 'pds-bbo-ogame';
     const ALERT_SELECTOR = '#attack_alert.soon';
     const NOTIF_COOLDOWN_KEY = 'ogs_notif_cooldown_min';
     const DEFAULT_NOTIF_COOLDOWN_MIN = 10; // minutes par défaut
