@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         OGSentinel
+// @name         OG Sentinel BBO
 // @namespace    benjamin.bourger
-// @version      10.6
+// @version      10.7
 // @updateURL    https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
 // @downloadURL  https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
 // @description  OGame : interception Porte de saut (+recyclage post-saut) + envoi auto expéditions + sniper enchère + auto-refresh + notification ntfy sur attaque + raid timé
@@ -205,7 +205,7 @@
         const atSec = Math.floor(target.getTime() / 1000);
         fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
             method: 'POST',
-            headers: { 'Title': 'OGSentinel', 'Priority': 'high', 'Tags': 'alarm_clock', 'At': String(atSec) },
+            headers: { 'Title': 'OG Sentinel BBO', 'Priority': 'high', 'Tags': 'alarm_clock', 'At': String(atSec) },
             body: message,
         })
         .then(() => {
@@ -247,7 +247,7 @@
             try {
                 const r = await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
                     method: 'POST',
-                    headers: { 'Title': 'OGSentinel', 'Priority': 'high', 'Tags': 'repeat', 'At': String(atSec) },
+                    headers: { 'Title': 'OG Sentinel BBO', 'Priority': 'high', 'Tags': 'repeat', 'At': String(atSec) },
                     body: message,
                 });
                 if (r.ok) ok++;
@@ -396,7 +396,7 @@
         try {
             const res = await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
                 method: 'POST',
-                headers: { 'Title': 'OGSentinel', 'Priority': 'high', 'Tags': 'rocket', 'At': String(Math.floor(atMs / 1000)) },
+                headers: { 'Title': 'OG Sentinel BBO', 'Priority': 'high', 'Tags': 'rocket', 'At': String(Math.floor(atMs / 1000)) },
                 body: message,
             });
             const j = await res.json();
@@ -2738,7 +2738,7 @@
         if (deliverAtMs - Date.now() < 15000) { console.log('[OGS] notif raid ignorée (impact < ~3 min)'); return; }
         fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
             method: 'POST',
-            headers: { 'Title': 'OGSentinel', 'Priority': 'high', 'Tags': 'crossed_swords', 'At': String(Math.floor(deliverAtMs / 1000)) },
+            headers: { 'Title': 'OG Sentinel BBO', 'Priority': 'high', 'Tags': 'crossed_swords', 'At': String(Math.floor(deliverAtMs / 1000)) },
             body: msg,
         })
         .then(r => r.json()).then(j => {
@@ -3012,7 +3012,7 @@
         try {
             const r = await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
                 method: 'POST',
-                headers: { 'Title': 'OGSentinel', 'Priority': 'high', 'Tags': tag || 'crossed_swords', 'At': String(Math.floor(atMs / 1000)) },
+                headers: { 'Title': 'OG Sentinel BBO', 'Priority': 'high', 'Tags': tag || 'crossed_swords', 'At': String(Math.floor(atMs / 1000)) },
                 body: msg,
             });
             const j = await r.json();
@@ -3793,7 +3793,7 @@
         if (deliverAtMs - Date.now() > 15000) {
             fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
                 method: 'POST',
-                headers: { 'Title': 'OGSentinel', 'Priority': 'high', 'Tags': 'ghost', 'At': String(Math.floor(deliverAtMs / 1000)) },
+                headers: { 'Title': 'OG Sentinel BBO', 'Priority': 'high', 'Tags': 'ghost', 'At': String(Math.floor(deliverAtMs / 1000)) },
                 body: 'Retour de Ghost',
             }).then(() => [500, 2000, 4000].forEach(t => setTimeout(updateScheduledList, t))).catch(() => {});
         }
@@ -3911,7 +3911,7 @@
     (function(){ if(!document.getElementById('ogs-fonts')){ const l=document.createElement('link'); l.id='ogs-fonts'; l.rel='stylesheet'; l.href='https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700&family=Share+Tech+Mono&display=swap'; document.head.appendChild(l);} })();
     const style = document.createElement('style');
     style.textContent = `
-        /* ====== OGSENTINEL v6 — thème OGame (bleu acier / spatial) ====== */
+        /* ====== OG SENTINEL BBO — thème OGame (bleu acier / spatial) ====== */
         :root{
           --ink:#070b13;
           --blue:#6f9fc8; --blue-lt:#a6cbee; --cyan:#5cc6ff;
@@ -4077,7 +4077,7 @@
     panel.innerHTML = `
         <div id="ogs-header">
             <span id="ogs-alert-dot"></span>
-            <span id="ogs-title">OGSENTINEL</span>
+            <span id="ogs-title">OG SENTINEL BBO</span>
             <span id="ogs-collapse-btn" title="Réduire / déployer">▾</span>
         </div>
         <div class="ogs-body">
@@ -4960,7 +4960,7 @@
             updateDbStatus();
             dbEmpireScan('manuel');
         });
-        // Export / import de toute la config OGSentinel (clés ogs_* et pds_*)
+        // Export / import de toute la config OG Sentinel BBO (clés ogs_* et pds_*)
         fly.querySelector('#ogs-cfg-export').addEventListener('click', () => {
             const data = {};
             for (let i = 0; i < localStorage.length; i++) {
@@ -4970,7 +4970,7 @@
             const blob = new Blob([JSON.stringify({ ogsentinel: 1, exportedAt: new Date().toISOString(), data }, null, 1)], { type: 'application/json' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = 'ogsentinel-config.json';
+            a.download = 'og-sentinel-bbo-config.json';
             a.click();
             setTimeout(() => URL.revokeObjectURL(a.href), 5000);
         });
