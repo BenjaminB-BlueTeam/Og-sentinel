@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGSentinel
 // @namespace    benjamin.bourger
-// @version      10.3
+// @version      10.4
 // @updateURL    https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
 // @downloadURL  https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
 // @description  OGame : interception Porte de saut (+recyclage post-saut) + envoi auto expéditions + sniper enchère + auto-refresh + notification ntfy sur attaque + raid timé
@@ -4121,7 +4121,11 @@
             if (g) g.value = m[1];
             if (s) s.value = m[2];
             if (p) p.value = m[3];
-            if (t) t.value = type;
+            if (t) t.value = type;   // 1 = planète, 3 = lune (préfixe du value)
+            // Écrire .value par script ne déclenche PAS 'change' : sans ça la
+            // config auto (dont le type Lune) n'est pas persistée et repart
+            // sur « Planète » au prochain chargement.
+            saveRaidAutoCfg(readRaidAutoCfgFromUI());
         });
     })();
     document.getElementById('ogs-inter-dest').addEventListener('change', (e) => {
