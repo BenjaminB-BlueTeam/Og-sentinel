@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGSentinel
 // @namespace    benjamin.bourger
-// @version      10.4
+// @version      10.5
 // @updateURL    https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
 // @downloadURL  https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
 // @description  OGame : interception Porte de saut (+recyclage post-saut) + envoi auto expéditions + sniper enchère + auto-refresh + notification ntfy sur attaque + raid timé
@@ -2655,9 +2655,29 @@
         if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1);
         return d;
     }
+    // Libellé du bouton principal : il sert au manuel, au programmé et au tir armé.
+    function syncRaidGoBtn(prog) {
+        const btn = document.getElementById('ogs-raid-go');
+        if (!btn) return;
+        if (raid.armed) { btn.textContent = '⏹ Désarmer le raid'; btn.classList.add('ogs-btn-stop'); return; }
+        // Un raid programmé reste annulable même si on a rebasculé en Manuel,
+        // sinon il partirait sans qu'aucun bouton ne permette de l'arrêter.
+        if (prog && prog.armed) {
+            btn.textContent = '⏹ Annuler le raid programmé';
+            btn.classList.add('ogs-btn-stop');
+        } else if (getRaidMode() === 'auto') {
+            btn.textContent = '🛰 Programmer le raid';
+            btn.classList.remove('ogs-btn-stop');
+        } else {
+            btn.textContent = '🎯 Armer le raid';
+            btn.classList.remove('ogs-btn-stop');
+        }
+    }
     function updateRaidDisplay() {
         const info = document.getElementById('ogs-raid-info');
         const active = document.getElementById('ogs-raid-active');
+        const prog = loadRaidProg();
+        syncRaidGoBtn(prog);
         if (!info) return;
         // ---- Bloc "en cours" sous le bouton Armer ----
         if (active) {
@@ -2673,16 +2693,35 @@
                     '<div>' + (raid.isGhost ? 'Retour' : 'Impact') + ' : <b style="color:#f0b24a">' + impactStr + '</b> (dans ' + fmtDur(toImpact / 1000) + ')</div>' +
                     '<div>Envoi dans <b style="color:#7fd98a">' + fmtDur(toFire / 1000) + '</b> · vol ' + fmtDur(raid.durationSec) + '</div>' +
                     (raid.consumption ? '<div>Conso : <b style="color:#e0a94a">' + Number(raid.consumption).toLocaleString('fr') + '</b> deutérium</div>' : '');
+            } else if (prog && prog.armed) {
+                // ---- Raid programmé : en attente, rien n'est encore engagé ----
+                const off = currentClockOffset();
+                const nowC = Date.now();
+                const departClient = prog.departServerMs - off;
+                const takeover = departClient - prog.leadS * 1000;
+                const soon = (takeover - nowC) < 60000;
+                active.style.display = 'block';
+                active.innerHTML =
+                    '<div style="color:#8ad6ff;font-weight:600">🛰 RAID PROGRAMMÉ</div>' +
+                    '<div>Départ de <b style="color:#a6cbee">' + escapeHtml(prog.fromLabel || '?') + '</b></div>' +
+                    '<div>Cible : <b style="color:#a6cbee">' + escapeHtml(prog.coords || '?') + '</b>' +
+                        (prog.typeLabel ? ' (' + escapeHtml(prog.typeLabel) + ')' : '') +
+                        ' · <b style="color:#a6cbee">' + escapeHtml(prog.missionName || '') + '</b></div>' +
+                    '<div>Impact : <b style="color:#f0b24a">' + new Date(prog.impactMs).toLocaleTimeString('fr-FR') + '</b> · vol ' + fmtDur(prog.durationSec) + '</div>' +
+                    '<div>Départ dans <b style="color:#7fd98a">' + fmtDur((departClient - nowC) / 1000) + '</b></div>' +
+                    '<div>Prise de main dans <b style="color:' + (soon ? '#e0a94a' : '#8fb0cc') + '">' + fmtDur((takeover - nowC) / 1000) + '</b>' +
+                        (raidProgHot ? ' <span style="color:#e0a94a">— auto-refresh suspendu</span>' : '') + '</div>' +
+                    (prog.consumption ? '<div>Conso : <b style="color:#e0a94a">' + Number(prog.consumption).toLocaleString('fr') + '</b> deutérium</div>' : '');
             } else {
                 active.style.display = 'none';
                 active.innerHTML = '';
             }
         }
-        if (raid.armed) { info.innerHTML = ''; return; }
+        if (raid.armed || (prog && prog.armed)) { info.innerHTML = ''; return; }
         const f = readRaidFleet();
         if (!f) {
             info.innerHTML = getRaidMode() === 'auto'
-                ? '<span style="color:#9fb2c8">Mode auto : configure cible + vaisseaux ci-dessous, depuis la page Flotte (étape 1).</span>'
+                ? '<span style="color:#9fb2c8">Mode auto : renseigne départ, cible, vaisseaux et heure d\'impact, puis « Programmer ». Le script fait le reste tout seul.</span>'
                 : '<span style="color:#e0a94a">Prépare la flotte sur Flotte → étape 3 (bouton « Envoyer la flotte ») pour armer.</span>';
             return;
         }
@@ -2773,6 +2812,10 @@
             if (!raw || raw === '0') return;
             cfg.ships[id] = (raw === 'max' || raw === 'm') ? 'max' : (parseInt(raw, 10) || 0);
         });
+        // Corps de départ : cp (pour la navigation) + libellé (pour l'affichage).
+        const fromEl = document.getElementById('ogs-raid-from');
+        cfg.fromCp = (fromEl && fromEl.value) || null;
+        cfg.fromLabel = (fromEl && fromEl.selectedOptions[0]) ? fromEl.selectedOptions[0].textContent.trim() : '';
         return cfg;
     }
     function applyRaidAutoCfgToUI() {
@@ -2780,6 +2823,13 @@
         const set = (id, v) => { const el = document.getElementById(id); if (el && v != null && !isNaN(v)) el.value = v; };
         set('ogs-raid-g', cfg.g); set('ogs-raid-s', cfg.s); set('ogs-raid-p', cfg.p);
         set('ogs-raid-type', cfg.type); set('ogs-raid-mission', cfg.mission); set('ogs-raid-speed', cfg.speed);
+        // cp = chaîne : le garde !isNaN de set() ne convient pas.
+        const fromEl = document.getElementById('ogs-raid-from');
+        if (fromEl && cfg.fromCp && Array.from(fromEl.options).some(o => o.value === String(cfg.fromCp))) {
+            fromEl.value = String(cfg.fromCp);
+        }
+        const leadEl = document.getElementById('ogs-raid-lead');
+        if (leadEl) leadEl.value = getRaidLeadS();
         document.querySelectorAll('.ogs-raid-ship-n').forEach(inp => {
             const id = parseInt(inp.dataset.shipId, 10);
             const v = cfg.ships && cfg.ships[id];
@@ -2856,16 +2906,310 @@
         if (isMissionBlocked()) { setStatus('Raid auto : mission refusée par le jeu', 'error'); return false; }
         return true;
     }
+    // ============================================================
+    // RAID PROGRAMMÉ (mode Auto) — tir autonome à l'heure d'impact
+    // Armement : le script va sur la page Flotte du corps de départ, fait
+    // une préparation À BLANC pour lire la durée de vol réelle, puis
+    // RELÂCHE la flotte et se met en attente. Rien n'est bloqué pendant
+    // ce temps : tu joues normalement, l'auto-refresh continue.
+    // Prise de main : à départ − N s, le script navigue lui-même sur la
+    // page Flotte du corps de départ, re-sélectionne les vaisseaux, refait
+    // cible + mission + vitesse, puis arme le moteur de tir (Worker 4 ms)
+    // qui clique « Envoyer la flotte » à la milliseconde voulue.
+    // L'état survit aux rechargements (localStorage) : il suffit que le
+    // navigateur reste ouvert sur une page du jeu.
+    // ============================================================
+    const RAID_PROG_KEY = 'ogs_raid_prog';        // état du raid programmé (JSON)
+    const RAID_LEAD_KEY = 'ogs_raid_prog_lead';   // prise de main à départ − N s
+    const DEFAULT_RAID_LEAD_S = 90;
+    const RAID_PROG_HOT_MS = 120000;              // fenêtre de blocage de l'auto-refresh
+    const RAID_PROG_MAX_NAV = 3;                  // garde-fou anti-boucle de navigation
+    const RAID_PROG_LOCK_MS = 45000;              // validité du verrou d'onglet (re-pris à chaque étape)
+    let raidProgHot = false;                      // bloque l'auto-refresh à l'approche
+    let raidProgWorking = false;                  // une séquence est déjà en cours
+    // Identité de l'ONGLET (sessionStorage : propre à l'onglet, survit à la
+    // navigation interne). Sans ça, deux onglets du jeu ouverts prendraient
+    // la main en même temps et enverraient la flotte deux fois.
+    const OGS_TAB_ID = (function () {
+        try {
+            let id = sessionStorage.getItem('ogs_tab_id');
+            if (!id) { id = Math.random().toString(36).slice(2); sessionStorage.setItem('ogs_tab_id', id); }
+            return id;
+        } catch (e) { return 'tab'; }
+    })();
+    // Un autre onglet a-t-il la main sur cette séquence ?
+    function raidProgLockedElsewhere(st) {
+        return !!(st && st.lockBy && st.lockBy !== OGS_TAB_ID &&
+                  Date.now() - (st.lockAt || 0) < RAID_PROG_LOCK_MS);
+    }
+    function raidProgClaim(st) {
+        st.lockBy = OGS_TAB_ID;
+        st.lockAt = Date.now();
+        saveRaidProg(st);
+    }
+    function getRaidLeadS() {
+        let v = parseInt(localStorage.getItem(RAID_LEAD_KEY), 10);
+        if (isNaN(v) || v < 30) v = DEFAULT_RAID_LEAD_S;
+        if (v > 900) v = 900;
+        return v;
+    }
+    function loadRaidProg() {
+        try { return JSON.parse(localStorage.getItem(RAID_PROG_KEY) || 'null'); } catch (e) { return null; }
+    }
+    function saveRaidProg(st) {
+        if (st) localStorage.setItem(RAID_PROG_KEY, JSON.stringify(st));
+        else localStorage.removeItem(RAID_PROG_KEY);
+    }
+    // L'offset horloge peut ne pas être mesuré sur la page courante : on
+    // retombe sur le cache partagé (SNIPE_OFFSET_KEY) pour l'affichage et
+    // le déclenchement grossier. Il est re-mesuré à la prise de main.
+    function currentClockOffset() {
+        if (snipe.offset != null) return snipe.offset;
+        const v = parseInt(localStorage.getItem(SNIPE_OFFSET_KEY), 10);
+        return isNaN(v) ? 0 : v;
+    }
+    // Tous les corps (planètes ET lunes) avec leur cp, pour le point de départ.
+    // Source : #planetList (toujours présent) ; noms enrichis par la BDD.
+    function listOwnBodies() {
+        const db = dbLoad();
+        const nameP = {}, nameM = {};
+        if (db.empire) {
+            db.empire.planets.forEach(b => { nameP[b.coords] = b.name; });
+            db.empire.moons.forEach(b => { nameM[b.coords] = b.name; });
+        }
+        const out = [];
+        document.querySelectorAll('#planetList > div').forEach(div => {
+            const k = div.querySelector('.planet-koords');
+            if (!k) return;
+            const coords = k.textContent.trim();
+            const pl = div.querySelector('a.planetlink');
+            const pm = pl ? (pl.getAttribute('href') || '').match(/cp=(\d+)/) : null;
+            if (pm) {
+                const n = div.querySelector('.planet-name');
+                out.push({ cp: pm[1], coords, isMoon: false, name: nameP[coords] || (n ? n.textContent.trim() : '') });
+            }
+            const ml = div.querySelector('.moonlink');
+            const mm = ml ? (ml.getAttribute('href') || '').match(/cp=(\d+)/) : null;
+            if (mm) out.push({ cp: mm[1], coords, isMoon: true, name: nameM[coords] || 'Lune' });
+        });
+        return out;
+    }
+    // Sommes-nous sur la page Flotte du corps de départ ? On se fie à la meta
+    // ogame-planet-id plutôt qu'à l'URL : elle reste juste après un retour AJAX.
+    function raidProgOnFromPage(cp) {
+        return isFleetPage() && String(getCurPlanetId() || '') === String(cp);
+    }
+    function raidProgAtStep1() {
+        return !!document.querySelector('[data-ipi-hint="ipiFleetContinueToPage2"]');
+    }
+    function raidProgGoToFrom(cp) {
+        location.href = location.origin + location.pathname + '?page=ingame&component=fleetdispatch&cp=' + cp;
+    }
+    // Notif ntfy programmée côté serveur ('At') : délivrée même navigateur fermé.
+    // atMs est une date SERVEUR (= temps réel), pas l'horloge du PC.
+    async function raidProgNotify(msg, atMs, tag) {
+        if (atMs - Date.now() < 15000) return null;
+        try {
+            const r = await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
+                method: 'POST',
+                headers: { 'Title': 'OGSentinel', 'Priority': 'high', 'Tags': tag || 'crossed_swords', 'At': String(Math.floor(atMs / 1000)) },
+                body: msg,
+            });
+            const j = await r.json();
+            return (j && j.id) || null;
+        } catch (e) { return null; }
+    }
+    function disarmRaidProg(reason) {
+        const st = loadRaidProg();
+        if (st) { deleteScheduledNotifSilent(st.notifTakeover); deleteScheduledNotifSilent(st.notifImpact); }
+        saveRaidProg(null);
+        raidProgHot = false;
+        if (reason) setStatus(reason, 'ok');
+        updateRaidDisplay();
+        [400, 1500].forEach(d => setTimeout(updateScheduledList, d));
+    }
+    // ---- Armement ----
+    async function armRaidProg() {
+        const cur = loadRaidProg();
+        if (cur && cur.armed) { disarmRaidProg('Raid programmé annulé'); return; }
+        if (raid.armed) { setStatus('Raid : un envoi timé est déjà armé', 'error'); return; }
+        const cfg = readRaidAutoCfgFromUI();
+        saveRaidAutoCfg(cfg);
+        if (!cfg.fromCp) { setStatus('Raid : choisis la position de départ', 'error'); return; }
+        if (isNaN(cfg.g) || isNaN(cfg.s) || isNaN(cfg.p)) { setStatus('Raid : coordonnées de cible invalides', 'error'); return; }
+        if (!Object.keys(cfg.ships || {}).length) { setStatus('Raid : aucun vaisseau renseigné', 'error'); return; }
+        const timeEl = document.getElementById('ogs-raid-time');
+        const dateEl = document.getElementById('ogs-raid-date');
+        const tm = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec((timeEl && timeEl.value) || '');
+        if (!tm) { setStatus('Raid : heure d\'impact invalide (HH:MM:SS)', 'error'); return; }
+        const hh = +tm[1], mm = +tm[2], ss = tm[3] != null ? +tm[3] : 0;
+        if (hh > 23 || mm > 59 || ss > 59) { setStatus('Raid : heure d\'impact invalide', 'error'); return; }
+        const impactMs = raidNextOccurrence(hh, mm, ss, dateEl ? dateEl.value : '').getTime();
+        // La mesure exige la page Flotte du corps de départ, à l'étape 1.
+        if (!raidProgOnFromPage(cfg.fromCp) || !raidProgAtStep1()) {
+            raidProgClaim({ armed: 0, stage: 'measure', cfg, impactMs, at: Date.now(), nav: 1 });
+            setStatus('Raid : navigation vers la position de départ…', 'busy');
+            raidProgGoToFrom(cfg.fromCp);
+            return;
+        }
+        await raidProgMeasureAndArm(cfg, impactMs);
+    }
+    // Préparation à blanc : sert UNIQUEMENT à lire la durée de vol réelle
+    // (le jeu est seul juge). La flotte est relâchée juste après.
+    async function raidProgMeasureAndArm(cfg, impactMs) {
+        if (raidProgWorking) return;
+        raidProgWorking = true;
+        try {
+            setStatus('Raid : mesure de l\'offset horloge…', 'busy');
+            if (snipe.offset == null) { try { await measureSnipeOffset(); } catch (e) {} }
+            if (snipe.offset == null) { setStatus('Raid : offset horloge non mesuré', 'error'); saveRaidProg(null); return; }
+            setStatus('Raid : mesure de la durée de vol…', 'busy');
+            const ok = await prepareRaidAuto(cfg);
+            if (!ok) { saveRaidProg(null); updateRaidDisplay(); return; }   // statut déjà posé
+            const f = readRaidFleet();
+            if (!f) { setStatus('Raid : durée de vol illisible', 'error'); saveRaidProg(null); return; }
+            let cons = null;
+            try { cons = fleetDispatcher.getConsumption(); } catch (e) {}
+            // Sélectionner des vaisseaux ne les réserve pas côté serveur, mais on
+            // remet la page à zéro pour ne pas laisser un envoi prêt à partir au
+            // moindre clic pendant les heures d'attente.
+            try { fleetDispatcher.resetShips(); fleetDispatcher.refresh && fleetDispatcher.refresh(); } catch (e) {}
+            const leadS = getRaidLeadS();
+            const departServerMs = impactMs - f.durationSec * 1000;
+            const takeoverClient = departServerMs - snipe.offset - leadS * 1000;
+            if (takeoverClient - Date.now() < 5000) {
+                const toDepart = (departServerMs - snipe.offset - Date.now()) / 1000;
+                setStatus('Raid : trop tard — départ dans ' + fmtDur(toDepart) + ', il faut plus de ' + leadS + ' s', 'error');
+                saveRaidProg(null); updateRaidDisplay(); return;
+            }
+            const st = {
+                armed: 1, stage: 'wait', cfg, impactMs, departServerMs, leadS,
+                durationSec: f.durationSec, consumption: cons,
+                coords: f.coords, typeLabel: f.type, missionName: f.missionName,
+                fromLabel: cfg.fromLabel || '', notifTakeover: null, notifImpact: null, nav: 0,
+            };
+            saveRaidProg(st);
+            // Notifs ntfy (dates serveur) : prise de main imminente, puis impact.
+            const n1 = await raidProgNotify('Prise de main du raid dans 1 min → ' + (f.coords || ''), departServerMs - leadS * 1000 - 60000, 'alarm_clock');
+            const n2 = await raidProgNotify('Checker le raid (impact ' + new Date(impactMs).toLocaleTimeString('fr-FR') + ')', impactMs - 3 * 60 * 1000, 'crossed_swords');
+            const back = loadRaidProg();
+            if (back && back.armed) { back.notifTakeover = n1; back.notifImpact = n2; saveRaidProg(back); }
+            [500, 2000, 4000].forEach(d => setTimeout(updateScheduledList, d));
+            console.log('[OGS] RAID PROGRAMMÉ | impact', new Date(impactMs).toISOString(),
+                '| départ', new Date(departServerMs).toISOString(), '| vol', f.durationSec, 's',
+                '| prise de main dans', Math.round((takeoverClient - Date.now()) / 1000), 's');
+            setStatus('Raid programmé : impact ' + new Date(impactMs).toLocaleTimeString('fr-FR'), 'ok');
+            updateRaidDisplay();
+        } finally {
+            raidProgWorking = false;
+        }
+    }
+    // ---- Prise de main : re-préparation complète puis armement du tir ----
+    async function raidProgTakeover(st) {
+        if (raidProgWorking || raid.armed) return;
+        if (raidProgLockedElsewhere(st)) return;   // un autre onglet s'en occupe
+        raidProgClaim(st);
+        if (!raidProgOnFromPage(st.cfg.fromCp) || !raidProgAtStep1()) {
+            // Garde-fou : si la navigation n'aboutit pas, on abandonne au lieu
+            // de boucler indéfiniment sur des rechargements.
+            const nav = (st.nav || 0) + 1;
+            if (nav > RAID_PROG_MAX_NAV) {
+                sendNotification('OGame - Raid', '❌ Raid programmé abandonné : impossible d\'atteindre la page Flotte de départ', 'urgent');
+                setStatus('Raid programmé : page de départ inatteignable', 'error');
+                disarmRaidProg();
+                return;
+            }
+            st.stage = 'prep'; st.nav = nav;
+            raidProgClaim(st);
+            console.log('[OGS] raid programmé : navigation vers la position de départ (essai ' + nav + ')');
+            raidProgGoToFrom(st.cfg.fromCp);
+            return;
+        }
+        raidProgWorking = true;
+        try {
+            setStatus('Raid programmé : prise de main…', 'busy');
+            try { await measureSnipeOffset(); } catch (e) {}
+            const ok = await prepareRaidAuto(st.cfg);
+            if (!ok) {
+                sendNotification('OGame - Raid', '❌ Raid programmé : préparation échouée → ' + (st.coords || '?'), 'urgent');
+                disarmRaidProg();
+                return;
+            }
+            // La durée relue en frais fait foi (la flotte a pu changer entre-temps).
+            const f = readRaidFleet();
+            const durationSec = (f && f.durationSec) || st.durationSec;
+            const departServerMs = st.impactMs - durationSec * 1000;
+            const fireClient = departServerMs + getRaidMargin() - (snipe.offset || 0) - (snipe.oneWay || 100);
+            if (fireClient - Date.now() < -1500) {
+                sendNotification('OGame - Raid', '❌ Raid programmé : trop tard au moment du tir → ' + (st.coords || '?'), 'urgent');
+                setStatus('Raid programmé : trop tard pour partir à l\'heure', 'error');
+                disarmRaidProg();
+                return;
+            }
+            // L'état programmé a fait son travail : on le retire AVANT d'armer le
+            // tir, sinon un rechargement dans la seconde de départ relancerait
+            // toute la séquence.
+            // La notif « prise de main » n'a plus lieu d'être ; celle de l'impact
+            // reste utile (elle sert à venir checker le résultat du raid).
+            deleteScheduledNotifSilent(st.notifTakeover);
+            saveRaidProg(null);
+            raidProgHot = false;
+            raid.armed = true; raid.fireAt = fireClient; raid.impactMs = st.impactMs; raid.durationSec = durationSec;
+            raid.coords = (f && f.coords) || st.coords;
+            raid.typeLabel = (f && f.type) || st.typeLabel;
+            raid.missionName = (f && f.missionName) || st.missionName;
+            try { raid.consumption = fleetDispatcher.getConsumption(); } catch (e) { raid.consumption = null; }
+            console.log('[OGS] raid programmé : tir armé dans', Math.round((fireClient - Date.now()) / 1000), 's',
+                '| départ', new Date(departServerMs).toISOString(), '| vol', durationSec, 's');
+            setStatus('Raid programmé : tir dans ' + fmtDur((fireClient - Date.now()) / 1000), 'ok');
+            updateRaidDisplay();
+            raid.coarse = setTimeout(raidTightLoop, Math.max(0, fireClient - Date.now() - 2500));
+        } finally {
+            raidProgWorking = false;
+        }
+    }
+    // ---- Veille (toutes les 2 s, sur toutes les pages) ----
+    async function raidProgTick() {
+      try {
+        const st = loadRaidProg();
+        if (!st || !st.armed) { raidProgHot = false; return; }
+        const takeoverClient = st.departServerMs - currentClockOffset() - st.leadS * 1000;
+        const remain = takeoverClient - Date.now();
+        raidProgHot = remain < RAID_PROG_HOT_MS;
+        if (raid.armed || raidProgWorking || remain > 0) return;
+        if (raidProgLockedElsewhere(st)) return;
+        // Départ déjà passé : plus rien à sauver, on abandonne proprement.
+        if (st.departServerMs - currentClockOffset() - Date.now() < -1500) {
+            sendNotification('OGame - Raid', '❌ Raid programmé manqué → ' + (st.coords || '?'), 'urgent');
+            setStatus('Raid programmé : départ manqué', 'error');
+            disarmRaidProg();
+            return;
+        }
+        await raidProgTakeover(st);
+      } catch (e) { console.warn('[OGS] raid programmé : tick en échec', e); }
+    }
+    // Reprise après une navigation déclenchée par le script lui-même.
+    function consumeRaidProgIfNeeded() {
+        const st = loadRaidProg();
+        if (!st) return;
+        if (raidProgLockedElsewhere(st)) return;
+        if (!st.armed && st.stage === 'measure') {
+            if (Date.now() - (st.at || 0) > 120000) { saveRaidProg(null); return; }   // trop vieux
+            if (!raidProgOnFromPage(st.cfg.fromCp) || !raidProgAtStep1()) return;
+            saveRaidProg(null);
+            if (typeof ogsActivatePaneHook === 'function') ogsActivatePaneHook('raid');
+            raidProgMeasureAndArm(st.cfg, st.impactMs);
+            return;
+        }
+        if (st.armed && st.stage === 'prep') {
+            if (typeof ogsActivatePaneHook === 'function') ogsActivatePaneHook('raid');
+            raidProgTakeover(st);
+        }
+    }
+    // Armement MANUEL : la flotte est déjà prête à l'étape 3, on ne cale que le clic.
+    // (Le mode Auto passe par armRaidProg / le raid programmé.)
     async function armRaid(hhmmss, dateStr) {
         if (raid.armed) { disarmRaid('Raid désarmé'); return; }
-        // Mode AUTO : préparer la flotte d'abord (vaisseaux + cible + mission + vitesse)
-        if (getRaidMode() === 'auto') {
-            const cfg = readRaidAutoCfgFromUI();
-            saveRaidAutoCfg(cfg);
-            setStatus('Raid auto : préparation…', 'busy');
-            const okPrep = await prepareRaidAuto(cfg);
-            if (!okPrep) return;
-        }
         const f = readRaidFleet();
         if (!f) { setStatus('Raid : va sur Flotte étape 3', 'error'); return; }
         const tm = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(hhmmss || '');
@@ -3081,6 +3425,8 @@
     }
     async function armDeca() {
         if (raid.armed) { setStatus('Décalage : un envoi timé est déjà armé', 'error'); return; }
+        const progNow = loadRaidProg();
+        if (progNow && progNow.armed) { setStatus('Décalage : un raid programmé est en attente — annule-le d\'abord', 'error'); return; }
         const sel = document.getElementById('ogs-deca-union');
         const u = listUnions().find(x => String(x.id) === (sel && sel.value));
         if (!u) { setStatus('Décalage : aucun groupe sélectionné', 'error'); return; }
@@ -3480,7 +3826,7 @@
         // Sniper armé : on ne suspend le refresh QUE sur la page enchères
         // (ailleurs il n'y a pas de socket à protéger, endTime est en cache).
         // Raid armé : on ne recharge jamais (le clic d'envoi doit rester possible).
-        if (ogsBusyOps > 0 || isExpeRunning() || ghostRunning || trapBusy || interAutoHot || interAutoRunning || raid.armed || (isSnipeArmed() && isAuctioneerPage())) { scheduleRefresh(); return; }
+        if (ogsBusyOps > 0 || isExpeRunning() || ghostRunning || trapBusy || interAutoHot || interAutoRunning || raid.armed || raidProgHot || raidProgWorking || (isSnipeArmed() && isAuctioneerPage())) { scheduleRefresh(); return; }
         // Liste des pages réellement présentes dans le menu
         const available = REFRESH_PAGES
             .map(hint => ({ hint, el: document.querySelector(`a.menubutton[data-ipi-hint="${hint}"]`) }))
@@ -3504,7 +3850,7 @@
         const delay = minMs + Math.round(Math.random() * (maxMs - minMs));
         refreshDeadline = Date.now() + delay;
         refreshTimer = setTimeout(() => {
-            if (running || ogsBusyOps > 0 || isExpeRunning() || ghostRunning || trapBusy || interAutoHot || interAutoRunning || raid.armed || (isSnipeArmed() && isAuctioneerPage())) {
+            if (running || ogsBusyOps > 0 || isExpeRunning() || ghostRunning || trapBusy || interAutoHot || interAutoRunning || raid.armed || raidProgHot || raidProgWorking || (isSnipeArmed() && isAuctioneerPage())) {
                 scheduleRefresh();
                 return;
             }
@@ -3873,7 +4219,8 @@
                     </div>
                     <div id="ogs-raid-info"></div>
                     <div id="ogs-raid-auto-box" style="display:none;flex-direction:column;gap:8px;">
-                        <select id="ogs-raid-mypos" class="ogs-num" style="width:100%;box-sizing:border-box;"></select>
+                        <div style="font-size:10px;color:#6f9fc8;">Départ (d'où part la flotte)</div>
+                        <select id="ogs-raid-from" class="ogs-num" style="width:100%;box-sizing:border-box;"></select>
                         <div style="font-size:10px;color:#6f9fc8;">Cible (G : S : P)</div>
                         <div style="display:flex;gap:6px;">
                             <input type="number" id="ogs-raid-g" class="ogs-num" style="flex:1;min-width:0;" min="1" max="9" placeholder="G">
@@ -3899,6 +4246,8 @@
                         <div id="ogs-raid-ship-list" style="display:none;flex-direction:column;gap:2px;max-height:200px;overflow-y:auto;padding:6px;background:var(--ink);border:1px solid var(--bd);border-radius:4px;">
                             ${SHIPS.map(s => `<div class="ogs-ship-row" style="justify-content:space-between;"><span>${s.name}</span><input type="text" class="ogs-num ogs-raid-ship-n" data-ship-id="${s.id}" style="width:58px;" placeholder="0 / max"></div>`).join('')}
                         </div>
+                        <div class="ogs-interval"><span>Prise de main à départ −</span>
+                            <span style="display:flex;gap:4px;align-items:center"><input type="number" id="ogs-raid-lead" class="ogs-num" style="width:64px;" min="30" max="900" step="10"><span>s</span></span></div>
                     </div>
                     <div style="font-size:10px;color:#6f9fc8;">Heure d'impact (HH:MM:SS)</div>
                     <div style="display:flex;gap:6px;">
@@ -4086,47 +4435,21 @@
         });
     }
     // ---- Raid : préremplissage cible depuis la BDD (mes planètes/lunes) ----
-    (function initRaidMyPos() {
-        const sel = document.getElementById('ogs-raid-mypos');
+    // Liste des corps de départ (planètes + lunes) pour le raid programmé :
+    // c'est de là que le script ira lancer la flotte, d'où le besoin du cp.
+    (function initRaidFrom() {
+        const sel = document.getElementById('ogs-raid-from');
         if (!sel) return;
-        const db = dbLoad();
-        let opts = '<option value="">— mes positions (BDD) —</option>';
-        if (db.empire) {
-            // noms réels planètes ET lunes depuis le scan empire
-            const moonsByCoords = {};
-            db.empire.moons.forEach(m => { moonsByCoords[m.coords] = m; });
-            db.empire.planets.forEach(p => {
-                opts += `<option value="1|${p.coords}">🪐 ${p.coords} ${p.name}</option>`;
-                const mo = moonsByCoords[p.coords];
-                if (mo) opts += `<option value="3|${p.coords}">🌙 ${p.coords} ${mo.name}</option>`;
-            });
-        } else {
-            const planets = db.planets || [];
-            if (!planets.length) { sel.style.display = 'none'; return; }
-            planets.forEach(p => {
-                opts += `<option value="1|${p.coords}">🪐 ${p.coords} ${p.name}</option>`;
-                if (p.moonCp) opts += `<option value="3|${p.coords}">🌙 ${p.coords} Lune</option>`;
-            });
+        const bodies = listOwnBodies();
+        const cfg = getRaidAutoCfg();
+        if (!bodies.length) {
+            sel.innerHTML = '<option value="">— liste des positions indisponible —</option>';
+            return;
         }
-        sel.innerHTML = opts;
-        sel.addEventListener('change', () => {
-            if (!sel.value) return;
-            const [type, coords] = sel.value.split('|');
-            const m = coords.match(/\[(\d+):(\d+):(\d+)\]/);
-            if (!m) return;
-            const g = document.getElementById('ogs-raid-g');
-            const s = document.getElementById('ogs-raid-s');
-            const p = document.getElementById('ogs-raid-p');
-            const t = document.getElementById('ogs-raid-type');
-            if (g) g.value = m[1];
-            if (s) s.value = m[2];
-            if (p) p.value = m[3];
-            if (t) t.value = type;   // 1 = planète, 3 = lune (préfixe du value)
-            // Écrire .value par script ne déclenche PAS 'change' : sans ça la
-            // config auto (dont le type Lune) n'est pas persistée et repart
-            // sur « Planète » au prochain chargement.
-            saveRaidAutoCfg(readRaidAutoCfgFromUI());
-        });
+        sel.innerHTML = '<option value="">— choisir la position de départ —</option>' +
+            bodies.map(b => `<option value="${b.cp}"${String(b.cp) === String(cfg.fromCp || '') ? ' selected' : ''}>` +
+                `${b.isMoon ? '🌙' : '🪐'} ${b.coords} ${escapeHtml(b.name || '')}</option>`).join('');
+        // La persistance sur 'change' est branchée plus bas, avec les autres champs.
     })();
     document.getElementById('ogs-inter-dest').addEventListener('change', (e) => {
         const opt = e.target.selectedOptions[0];
@@ -4307,6 +4630,9 @@
     });
     const raidGoBtn = document.getElementById('ogs-raid-go');
     if (raidGoBtn) raidGoBtn.addEventListener('click', () => {
+        if (raid.armed) { disarmRaid('Raid désarmé'); return; }
+        const prog = loadRaidProg();
+        if ((prog && prog.armed) || getRaidMode() === 'auto') { armRaidProg(); return; }
         armRaid(raidTime ? raidTime.value : '', raidDate ? raidDate.value : '');
     });
     // Bascule Manuel / Auto (toggle segmenté) + affichage du bloc auto
@@ -4331,15 +4657,32 @@
         raidShipsToggle.textContent = open ? 'Vaisseaux ▴' : 'Vaisseaux ▾';
     });
     applyRaidAutoCfgToUI();
-    ['ogs-raid-g','ogs-raid-s','ogs-raid-p','ogs-raid-type','ogs-raid-mission','ogs-raid-speed'].forEach(id => {
+    ['ogs-raid-from','ogs-raid-g','ogs-raid-s','ogs-raid-p','ogs-raid-type','ogs-raid-mission','ogs-raid-speed'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.addEventListener('change', () => saveRaidAutoCfg(readRaidAutoCfgFromUI()));
     });
+    const raidLeadEl = document.getElementById('ogs-raid-lead');
+    if (raidLeadEl) {
+        raidLeadEl.value = getRaidLeadS();
+        raidLeadEl.addEventListener('change', () => {
+            let v = parseInt(raidLeadEl.value, 10);
+            if (isNaN(v) || v < 30) v = DEFAULT_RAID_LEAD_S;
+            if (v > 900) v = 900;
+            localStorage.setItem(RAID_LEAD_KEY, String(v));
+            raidLeadEl.value = v;
+            setStatus('Prise de main : départ − ' + v + ' s', 'ok');
+        });
+    }
     document.querySelectorAll('.ogs-raid-ship-n').forEach(inp => {
         inp.addEventListener('change', () => saveRaidAutoCfg(readRaidAutoCfgFromUI()));
     });
     setInterval(updateRaidDisplay, 500);
     updateRaidDisplay();
+    // Veille du raid programmé : tourne sur TOUTES les pages du jeu, c'est ce
+    // qui permet de continuer à jouer pendant l'attente.
+    setInterval(raidProgTick, 2000);
+    setTimeout(raidProgTick, 1500);
+    setTimeout(consumeRaidProgIfNeeded, 900);
     // ---- Décalage sonde (ACS) ----
     const decaUnionSel = document.getElementById('ogs-deca-union');
     if (decaUnionSel) decaUnionSel.addEventListener('change', refreshDecaUnions);
