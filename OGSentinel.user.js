@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OGSentinel
 // @namespace    benjamin.bourger
-// @version      10.8
+// @version      10.9
 // @updateURL    https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
 // @downloadURL  https://raw.githubusercontent.com/BenjaminB-BlueTeam/Og-sentinel/main/OGSentinel.user.js
 // @description  OGame : interception Porte de saut (+recyclage post-saut) + envoi auto expéditions + sniper enchère + auto-refresh + notification ntfy sur attaque + raid timé
@@ -2203,6 +2203,7 @@
             snipe.endTime = null; snipe.fired = false; snipe.attempts = 0; snipe.rafaleCount = 0; snipe.everLed = false; snipe.armed = false;
             try { localStorage.removeItem(SNIPE_ENDTIME_KEY); } catch (e) {} // cache périmé
             try { localStorage.removeItem(SNIPE_NOTIF_KEY); } catch (e) {}
+            try { localStorage.removeItem(SNIPE_REDIR_KEY); } catch (e) {}
             clearTimeout(snipeCoarseTimer);
             if (snipeWorker) { snipeWorker.terminate(); snipeWorker = null; }
             stopRafale();
@@ -2511,13 +2512,79 @@
             tick();
         }
     }
+    // ---- Redirection automatique vers la page enchères ----
+    // Sniper armé mais onglet ailleurs dans le jeu : le tir est IMPOSSIBLE
+    // (pas de socket auctioneer, pas de formulaire de mise). À N s de la fin,
+    // on ramène donc l'onglet sur le Commissaire-priseur.
+    // L'heure de fin vient du cache (SNIPE_ENDTIME_KEY), alimenté par la socket
+    // pendant que tu étais sur la page : sans passage préalable sur la page
+    // enchères depuis l'armement, il n'y a rien à viser et rien ne se déclenche.
+    const SNIPE_REDIR_LEAD_S = 10;                        // redirection à fin − N s
+    const SNIPE_REDIR_MIN_MS = 1500;                      // sous ce reste, inutile d'y aller
+    const SNIPE_REDIR_KEY = 'ogs_snipe_redirected_for';   // endTime déjà redirigé (one-shot)
+    const SNIPE_PAGE_KEY = 'ogs_snipe_page_url';          // URL réelle de la page enchères
+    // On mémorise l'URL qui a effectivement marché plutôt que de deviner le
+    // nom du composant : c'est la source la plus fiable.
+    function rememberAuctioneerUrl() {
+        if (!isAuctioneerPage()) return;
+        try { localStorage.setItem(SNIPE_PAGE_KEY, location.href); } catch (e) {}
+    }
+    function auctioneerUrl() {
+        const saved = localStorage.getItem(SNIPE_PAGE_KEY);
+        if (saved) return saved;
+        const link = document.querySelector('a.menubutton[href*="component=trader"]') ||
+                     document.querySelector('a[href*="component=trader"]');
+        if (link && link.href) return link.href;
+        return location.origin + location.pathname + '?page=ingame&component=traderOverview';
+    }
+    function snipeAutoRedirectTick() {
+        if (!isSnipeArmed() || isAuctioneerPage()) return;
+        const et = parseInt(localStorage.getItem(SNIPE_ENDTIME_KEY), 10);
+        if (!et || isNaN(et)) return;
+        if (localStorage.getItem(SNIPE_REDIR_KEY) === String(et)) return;   // déjà fait pour cette vente
+        const off = parseInt(localStorage.getItem(SNIPE_OFFSET_KEY), 10) || 0;
+        const left = et - off - Date.now();
+        if (left > SNIPE_REDIR_LEAD_S * 1000 || left < SNIPE_REDIR_MIN_MS) return;
+        // Une enchère ne vaut pas de casser un envoi timé ou une séquence en
+        // cours : ces opérations-là ne supportent pas un changement de page.
+        if (ogsBusyOps > 0 || isExpeRunning() || ghostRunning || trapBusy ||
+            interAutoHot || interAutoRunning || raid.armed || raidProgHot || raidProgWorking) {
+            console.log('[OGS] enchère : redirection annulée (opération critique en cours)');
+            return;
+        }
+        localStorage.setItem(SNIPE_REDIR_KEY, String(et));   // one-shot : pas de boucle
+        console.log('[OGS] enchère : redirection vers le Commissaire-priseur (' + Math.round(left / 1000) + ' s avant la fin)');
+        setStatus('Enchère : redirection vers la page…', 'busy');
+        location.href = auctioneerUrl();
+    }
     // ---- Init / UI ----
     let snipeWatchdogTimer = null;
+    // Sous ce reste, une mesure d'offset complète (jusqu'à 9 s) mangerait la
+    // fenêtre de tir : on s'arme tout de suite avec l'offset en cache.
+    const SNIPE_FASTARM_MS = 30000;
     function initSnipeIfNeeded() {
         if (!isSnipeArmed()) return;
         if (!isAuctioneerPage()) return;
-        if (snipe.offset == null) measureSnipeOffset().then(loadCachedEndTime);
-        else loadCachedEndTime();
+        if (snipe.offset != null) {
+            loadCachedEndTime();
+        } else {
+            const cachedEnd = parseInt(localStorage.getItem(SNIPE_ENDTIME_KEY), 10);
+            const cachedOff = parseInt(localStorage.getItem(SNIPE_OFFSET_KEY), 10);
+            const shortFuse = cachedEnd && !isNaN(cachedEnd) && !isNaN(cachedOff) &&
+                              (cachedEnd - cachedOff - Date.now()) < SNIPE_FASTARM_MS;
+            if (shortFuse) {
+                // Arrivée tardive (typiquement par redirection auto) : armement
+                // immédiat sur l'offset en cache, re-mesuré toutes les 2 min
+                // tant que le sniper est armé, donc frais à quelques dizaines
+                // de ms près. Pas de mesure ici : ses HEAD successifs
+                // encombreraient le réseau dans la seconde du tir.
+                snipe.offset = cachedOff;
+                console.log('[OGS] enchère : armement rapide sur offset en cache (' + cachedOff + ' ms)');
+                loadCachedEndTime();
+            } else {
+                measureSnipeOffset().then(loadCachedEndTime);
+            }
+        }
         hookAuctioneerSocket();
         // Watchdog permanent (et non un retry limité) : garde la socket vivante
         // et re-hooke l'instance courante quoi qu'il arrive.
@@ -2551,7 +2618,7 @@
                 const s = Math.round(leftMs / 1000);
                 st.textContent = fmtCountdown(s) + ' ⌛';   // ⌛ = suivi seul (le tir n'est possible que sur la page enchères)
                 st.style.color = s <= 15 ? '#ff5c5c' : '#8fb0c8';
-                if (info) info.innerHTML = '<span style="color:#8a9">enchère en cours — ouvre la page Commissaire-priseur pour tirer</span>';
+                if (info) info.innerHTML = '<span style="color:#8a9">enchère en cours — redirection auto à −' + SNIPE_REDIR_LEAD_S + ' s</span>';
             } else {
                 setHero(false);   // "hors page" sans donnée : lecteur masqué
                 st.textContent = 'hors page'; st.style.color = '#e0a94a'; if (info) info.textContent = '';
@@ -4867,6 +4934,9 @@
     setInterval(updateSnipeDisplay, 500);
     // Re-mesure périodique de l'offset horloge (toutes les 2 min) si armé
     setInterval(() => { if (isSnipeArmed() && isAuctioneerPage()) measureSnipeOffset(); }, 120000);
+    // Redirection auto vers la page enchères à fin − N s (sniper armé seulement).
+    rememberAuctioneerUrl();
+    setInterval(snipeAutoRedirectTick, 1000);
     // ---- Détection alerte + cooldown ----
     setTimeout(checkAlert, 3000);
     setInterval(checkAlert, 30000);
